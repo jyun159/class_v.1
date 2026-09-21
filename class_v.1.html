@@ -1,0 +1,1504 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智慧課堂加分系統 (Classroom Point System)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans TC', 'sans-serif'],
+                    },
+                    colors: {
+                        primary: '#4f46e5', // Indigo 600
+                        secondary: '#10b981', // Emerald 500
+                        danger: '#ef4444', // Red 500
+                        dark: '#1e293b', // Slate 800
+                        light: '#f8fafc', // Slate 50
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        .student-card {
+            transition: all 0.2s ease-in-out;
+        }
+        .student-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        .point-animation {
+            animation: pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); }
+        }
+
+        .floating-point {
+            position: absolute;
+            font-weight: bold;
+            font-size: 1.5rem;
+            pointer-events: none;
+            animation: floatUp 1s ease-out forwards;
+            z-index: 50;
+        }
+
+        @keyframes floatUp {
+            0% { opacity: 1; transform: translateY(0); }
+            100% { opacity: 0; transform: translateY(-50px); }
+        }
+
+        /* Toast Notifications */
+        #toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            min-width: 250px;
+            background: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transform: translateX(120%);
+            transition: transform 0.3s ease-in-out;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-left: 4px solid #4f46e5;
+        }
+        .toast.show {
+            transform: translateX(0);
+        }
+        .toast.success { border-left-color: #10b981; }
+        .toast.error { border-left-color: #ef4444; }
+        
+        .hide { display: none !important; }
+
+        /* Full screen overlay for student login */
+        #studentLoginOverlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(241, 245, 249, 0.95); /* bg-slate-100 with opacity */
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col relative overflow-hidden">
+
+    <!-- Student Login Overlay -->
+    <div id="studentLoginOverlay" class="transition-opacity duration-500">
+        <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md transform transition-all">
+            <div class="text-center mb-6">
+                <div class="w-16 h-16 bg-primary text-white rounded-full flex items-center justify-center text-3xl mx-auto mb-4 shadow-lg">
+                    <i class="fa-solid fa-graduation-cap"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-slate-800">歡迎回到課堂</h2>
+                <p class="text-slate-500 mt-2">請選擇班級並輸入姓名以查看分數</p>
+            </div>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">選擇班級</label>
+                    <select id="loginClassSelect" class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none bg-slate-50 cursor-pointer">
+                        <option value="" disabled selected>請選擇您的班級...</option>
+                        <!-- Populated by JS -->
+                    </select>
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">學生姓名</label>
+                    <input type="text" id="loginStudentName" class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none" placeholder="請輸入全名">
+                </div>
+                
+                <div id="studentLoginError" class="text-danger text-sm hidden text-center bg-red-50 p-2 rounded"><i class="fa-solid fa-circle-exclamation"></i> 找不到該學生或班級錯誤</div>
+                
+                <button id="studentLoginBtn" class="w-full py-3 px-4 bg-primary text-white rounded-lg hover:bg-indigo-700 transition-colors font-bold text-lg shadow-md mt-2">
+                    進入教室
+                </button>
+            </div>
+            
+            <div class="mt-6 pt-6 border-t border-slate-100 text-center">
+                <button id="openTeacherLoginFromOverlay" class="text-sm text-slate-500 hover:text-primary transition-colors flex items-center justify-center gap-1 mx-auto">
+                    <i class="fa-solid fa-shield-halved"></i> 老師請點此登入
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation Bar -->
+    <nav class="bg-primary text-white shadow-md z-40 sticky top-0">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16 items-center">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid fa-graduation-cap text-2xl"></i>
+                    <span class="font-bold text-xl tracking-tight hidden sm:block">智慧課堂加分系統</span>
+                    <span class="font-bold text-xl tracking-tight sm:hidden">加分系統</span>
+                </div>
+                
+                <!-- Role Context Indicator & Login Toggle -->
+                <div class="flex items-center gap-4">
+                    <button id="settingsBtn" class="teacher-only hidden text-white hover:text-indigo-200 transition-colors tooltip" title="系統設定">
+                        <i class="fa-solid fa-gear text-xl"></i>
+                    </button>
+                    <div id="roleIndicator" class="bg-white/20 px-3 py-1 rounded-full text-sm font-medium flex items-center gap-2">
+                        <i class="fa-solid fa-user-graduate"></i> 學生視角
+                    </div>
+                    <button id="authToggleBtn" class="bg-white text-primary hover:bg-slate-100 px-4 py-2 rounded-lg font-semibold transition-colors flex items-center gap-2 text-sm hidden">
+                        <!-- Hidden initially, shown after someone logs in -->
+                        <i class="fa-solid fa-lock"></i> <span>教師登入</span>
+                    </button>
+                    <button id="logoutBtn" class="bg-white/20 text-white hover:bg-white/30 px-4 py-2 rounded-lg font-semibold transition-colors flex items-center gap-2 text-sm hidden">
+                        <i class="fa-solid fa-arrow-right-from-bracket"></i> <span>登出</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex flex-col gap-6" id="mainContent" style="display: none;">
+        
+        <!-- Top Controls (Class Selection & Actions) -->
+        <div class="glass-panel rounded-2xl p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+            
+            <div class="flex items-center gap-2 w-full sm:w-auto">
+                <label class="font-semibold text-slate-700 whitespace-nowrap"><i class="fa-solid fa-chalkboard-user mr-1"></i> 目前班級:</label>
+                
+                <!-- Teacher View: Select & Manage -->
+                <select id="classSelect" class="teacher-only hidden bg-slate-50 border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-primary focus:border-primary block w-40 p-2.5 outline-none font-medium transition-colors cursor-pointer"></select>
+                
+                <button id="editClassBtn" class="teacher-only hidden bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg w-10 h-10 flex items-center justify-center transition-colors tooltip" title="編輯班級名稱">
+                    <i class="fa-solid fa-pen"></i>
+                </button>
+                <button id="deleteClassBtn" class="teacher-only hidden bg-slate-200 hover:bg-red-200 text-slate-700 hover:text-danger rounded-lg w-10 h-10 flex items-center justify-center transition-colors tooltip" title="刪除班級">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+                <button id="addClassBtn" class="teacher-only hidden bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg w-10 h-10 flex items-center justify-center transition-colors tooltip" title="新增班級">
+                    <i class="fa-solid fa-plus"></i>
+                </button>
+
+                <!-- Student View: Read Only Display -->
+                <span id="studentClassDisplay" class="student-only font-bold text-lg text-primary px-2">載入中...</span>
+            </div>
+
+            <!-- Teacher Only: Global Actions -->
+            <div class="teacher-only hidden flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
+                <button id="addStudentBtn" class="bg-primary hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm flex items-center gap-2 shadow-sm">
+                    <i class="fa-solid fa-user-plus"></i> <span class="hidden sm:inline">新增學生</span>
+                </button>
+                <div class="h-6 w-px bg-slate-300 hidden sm:block mx-1"></div>
+                <button id="exportDataBtn" class="bg-secondary hover:bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm flex items-center gap-2 shadow-sm">
+                    <i class="fa-solid fa-file-csv"></i> <span class="hidden md:inline">匯出 CSV</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Student Grid Area -->
+        <div class="glass-panel rounded-2xl p-6 flex-grow min-h-[500px]">
+            <div class="flex justify-between items-end mb-6">
+                <div>
+                    <h2 id="currentClassNameDisplay" class="text-2xl font-bold text-slate-800">載入中...</h2>
+                    <p class="text-slate-500 text-sm mt-1">
+                        <span id="studentCountDisplay">0</span> 位學生
+                        <span class="teacher-only hidden ml-2 text-primary font-medium cursor-pointer hover:underline" id="resetPointsBtn"><i class="fa-solid fa-rotate-left"></i> 重置全班分數</span>
+                    </p>
+                </div>
+                
+                <!-- Sort options -->
+                <div class="flex items-center gap-2 text-sm">
+                    <span class="text-slate-500"><i class="fa-solid fa-arrow-down-a-z"></i> 排序:</span>
+                    <select id="sortSelect" class="bg-transparent border-b border-slate-300 text-slate-700 focus:outline-none focus:border-primary pb-1 cursor-pointer">
+                        <option value="id">預設 (加入順序)</option>
+                        <option value="score_desc">分數最高</option>
+                        <option value="score_asc">分數最低</option>
+                        <option value="name">姓名筆畫</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Empty State -->
+            <div id="emptyState" class="hidden flex-col items-center justify-center py-20 text-slate-400">
+                <i class="fa-solid fa-users-slash text-6xl mb-4 text-slate-300"></i>
+                <h3 class="text-xl font-medium text-slate-600 mb-2">此班級尚無學生</h3>
+                <p class="teacher-only hidden">點擊上方「新增學生」按鈕開始建立名單</p>
+                <p class="student-only">請等待老師加入學生名單</p>
+            </div>
+
+            <!-- Grid Container -->
+            <div id="studentsGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                <!-- Student Cards dynamically inserted here -->
+            </div>
+        </div>
+    </main>
+
+    <!-- Modals -->
+    <!-- Overlay -->
+    <div id="modalOverlay" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[1050] hidden opacity-0 transition-opacity duration-300 flex justify-center items-center p-4">
+        
+        <!-- Teacher Login Modal -->
+        <div id="loginModal" class="modal-content hidden bg-white rounded-2xl shadow-xl w-full max-w-sm transform scale-95 transition-transform duration-300 overflow-hidden">
+            <div class="bg-primary p-4 text-center">
+                <i class="fa-solid fa-shield-halved text-white text-3xl mb-2"></i>
+                <h3 class="text-xl font-bold text-white">教師後台登入</h3>
+            </div>
+            <div class="p-6">
+                <p class="text-slate-600 text-sm mb-4 text-center">請輸入管理員密碼以解鎖加分與管理功能。</p>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-slate-700 mb-1">存取密碼</label>
+                    <input type="password" id="pinInput" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none text-center text-xl tracking-widest" placeholder="••••" autocomplete="off">
+                </div>
+                <div id="loginError" class="text-danger text-sm mb-4 hidden text-center"><i class="fa-solid fa-circle-exclamation"></i> 密碼錯誤，請重試</div>
+                <div class="flex gap-3">
+                    <button class="close-modal w-full py-2 px-4 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors">取消</button>
+                    <button id="loginSubmitBtn" class="w-full py-2 px-4 bg-primary text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium">登入</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Modal -->
+        <div id="settingsModal" class="modal-content hidden bg-white rounded-2xl shadow-xl w-full max-w-2xl transform scale-95 transition-transform duration-300 overflow-hidden max-h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center p-5 border-b border-slate-100 bg-slate-50">
+                <h3 class="text-lg font-bold text-slate-800"><i class="fa-solid fa-gear"></i> 系統設定</h3>
+                <button class="close-modal text-slate-400 hover:text-slate-600 transition-colors"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            <div class="p-5 overflow-y-auto flex-grow text-left">
+                <!-- Password Setting -->
+                <div class="mb-8">
+                    <h4 class="font-bold text-slate-700 mb-3 border-b pb-2">管理員密碼設定</h4>
+                    <div class="flex gap-2 items-center">
+                        <input type="password" id="newPinInput" class="px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none flex-grow max-w-xs" placeholder="輸入新密碼">
+                        <button id="savePinBtn" class="bg-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors">更新密碼</button>
+                    </div>
+                </div>
+
+                <!-- Shortcuts Setting -->
+                <div>
+                    <h4 class="font-bold text-slate-700 mb-3 border-b pb-2">自訂快捷鍵 (加減分)</h4>
+                    
+                    <div class="mb-6">
+                        <h5 class="font-semibold text-secondary mb-2"><i class="fa-solid fa-circle-plus"></i> 加分項目</h5>
+                        <div id="settingsPosList" class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3"></div>
+                        <button class="text-sm text-secondary hover:bg-emerald-50 px-3 py-1 rounded border border-emerald-200 transition-colors" onclick="addShortcutRow('positive')"><i class="fa-solid fa-plus"></i> 新增加分項</button>
+                    </div>
+
+                    <div>
+                        <h5 class="font-semibold text-danger mb-2"><i class="fa-solid fa-circle-minus"></i> 扣分項目</h5>
+                        <div id="settingsNegList" class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3"></div>
+                        <button class="text-sm text-danger hover:bg-red-50 px-3 py-1 rounded border border-red-200 transition-colors" onclick="addShortcutRow('negative')"><i class="fa-solid fa-plus"></i> 新增扣分項</button>
+                    </div>
+                </div>
+            </div>
+            <div class="p-5 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+                <button class="close-modal py-2 px-4 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors">取消</button>
+                <button id="saveSettingsBtn" class="py-2 px-6 bg-primary text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium">儲存設定</button>
+            </div>
+        </div>
+
+        <!-- Add/Edit Student Modal -->
+        <div id="studentModal" class="modal-content hidden bg-white rounded-2xl shadow-xl w-full max-w-md transform scale-95 transition-transform duration-300 overflow-hidden">
+            <div class="flex justify-between items-center p-5 border-b border-slate-100">
+                <h3 id="studentModalTitle" class="text-lg font-bold text-slate-800">新增學生</h3>
+                <button class="close-modal text-slate-400 hover:text-slate-600 transition-colors"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            <div class="p-5">
+                <input type="hidden" id="editStudentId">
+                <div class="mb-5">
+                    <label class="block text-sm font-medium text-slate-700 mb-1">學生姓名 / 座號</label>
+                    <input type="text" id="studentNameInput" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none" placeholder="例如: 王小明 或 01">
+                </div>
+                
+                <!-- Avatar selection (Simple color generation based on name later, or select preset) -->
+                <div class="mb-5">
+                    <label class="block text-sm font-medium text-slate-700 mb-2">選擇頭像圖示</label>
+                    <div class="grid grid-cols-6 gap-2" id="avatarSelection">
+                        <!-- Icons inserted by JS -->
+                    </div>
+                    <input type="hidden" id="selectedAvatar" value="fa-user">
+                </div>
+
+                <div class="flex gap-3 justify-end mt-6">
+                    <button class="close-modal py-2 px-4 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors">取消</button>
+                    <button id="saveStudentBtn" class="py-2 px-6 bg-primary text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium">儲存</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add / Edit Class Modal (FIXED) -->
+        <div id="classModal" class="modal-content hidden bg-white rounded-2xl shadow-xl w-full max-w-sm transform scale-95 transition-transform duration-300 overflow-hidden">
+             <div class="flex justify-between items-center p-5 border-b border-slate-100">
+                <h3 id="classModalTitle" class="text-lg font-bold text-slate-800">建立新班級</h3>
+                <button class="close-modal text-slate-400 hover:text-slate-600 transition-colors"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            <div class="p-5">
+                <!-- IMPORTANT: Hidden input to store class ID when editing -->
+                <input type="hidden" id="editClassId">
+                <div class="mb-5">
+                    <label class="block text-sm font-medium text-slate-700 mb-1">班級名稱</label>
+                    <input type="text" id="classNameInput" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none" placeholder="例如: 一年A班、204班...">
+                </div>
+                <div class="flex gap-3 justify-end mt-6">
+                    <button class="close-modal py-2 px-4 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors">取消</button>
+                    <button id="saveClassBtn" class="py-2 px-6 bg-primary text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium">儲存</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Point Action Modal (Shortcuts) -->
+        <div id="pointModal" class="modal-content hidden bg-white rounded-2xl shadow-xl w-full max-w-lg transform scale-95 transition-transform duration-300 overflow-hidden">
+             <div class="flex justify-between items-center p-5 border-b border-slate-100 bg-slate-50">
+                <div>
+                    <h3 class="text-lg font-bold text-slate-800">給予點數</h3>
+                    <p class="text-sm text-slate-500" id="pointTargetName">目標: <span></span></p>
+                </div>
+                <button class="close-modal text-slate-400 hover:text-slate-600 transition-colors"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            <div class="p-5">
+                <input type="hidden" id="targetStudentId">
+                
+                <!-- Positive Shortcuts -->
+                <h4 class="font-medium text-secondary mb-3 flex items-center gap-2"><i class="fa-solid fa-circle-plus"></i> 加分項目 (Positive)</h4>
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6" id="positiveShortcuts">
+                    <!-- Populated by JS -->
+                </div>
+
+                <!-- Negative Shortcuts -->
+                <h4 class="font-medium text-danger mb-3 flex items-center gap-2"><i class="fa-solid fa-circle-minus"></i> 扣分項目 (Needs Work)</h4>
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6" id="negativeShortcuts">
+                    <!-- Populated by JS -->
+                </div>
+
+                <!-- Custom Point Input -->
+                <div class="border-t border-slate-100 pt-4 mt-2">
+                    <h4 class="font-medium text-slate-700 mb-3 text-sm">自訂分數</h4>
+                    <div class="flex items-center gap-2">
+                        <input type="number" id="customPointValue" value="1" class="w-20 px-3 py-2 border border-slate-300 rounded-lg text-center font-bold focus:outline-none focus:border-primary">
+                        <input type="text" id="customPointReason" placeholder="輸入原因 (選填)" class="flex-grow px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-primary">
+                        <button class="bg-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors" id="btnCustomPoint">確定</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Confirmation Modal for Delete/Reset -->
+        <div id="confirmModal" class="modal-content hidden bg-white rounded-2xl shadow-xl w-full max-w-sm transform scale-95 transition-transform duration-300 overflow-hidden">
+            <div class="p-6 text-center">
+                <div class="w-16 h-16 rounded-full bg-red-100 text-danger flex items-center justify-center mx-auto mb-4 text-3xl">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                </div>
+                <h3 id="confirmTitle" class="text-xl font-bold text-slate-800 mb-2">確認刪除？</h3>
+                <p id="confirmMessage" class="text-slate-600 mb-6">此動作無法復原，您確定要繼續嗎？</p>
+                <div class="flex gap-3 justify-center">
+                    <button class="close-modal flex-1 py-2 px-4 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors font-medium">取消</button>
+                    <button id="confirmActionBtn" class="flex-1 py-2 px-4 bg-danger text-white rounded-lg hover:bg-red-600 transition-colors font-medium">確定執行</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Toast Notifications Container -->
+    <div id="toast-container"></div>
+
+    <script>
+        /**
+         * System Configuration & State
+         */
+        const CONFIG = {
+            STORAGE_KEY: "classroom_point_system_data"
+        };
+
+        // Default icons for avatars
+        const avatarIcons = [
+            'fa-user', 'fa-face-smile', 'fa-cat', 'fa-dog', 'fa-dragon', 
+            'fa-frog', 'fa-robot', 'fa-ghost', 'fa-kiwi-bird', 'fa-snowman',
+            'fa-meteor', 'fa-star'
+        ];
+
+        // Color palettes for avatars based on string hash
+        const colors = [
+            'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-green-500', 
+            'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500', 'bg-blue-500', 
+            'bg-indigo-500', 'bg-violet-500', 'bg-purple-500', 'bg-fuchsia-500', 'bg-pink-500'
+        ];
+
+        // Main Application State
+        let state = {
+            isTeacher: false, // Authentication state
+            loggedInStudentId: null, // Student Auth State
+            classes: [],      // Array of class objects {id, name, students: []}
+            currentClassId: null,
+            sortBy: 'id',     // 'id', 'score_desc', 'score_asc', 'name'
+            adminPin: '1234', // default password
+            shortcuts: {
+                positive: [
+                    { id: 'p1', label: '積極發言', icon: 'fa-hand', points: 1 },
+                    { id: 'p2', label: '幫助同學', icon: 'fa-hands-holding-child', points: 1 },
+                    { id: 'p3', label: '團隊合作', icon: 'fa-users', points: 2 },
+                    { id: 'p4', label: '作業優良', icon: 'fa-book-open', points: 2 },
+                    { id: 'p5', label: '認真聽講', icon: 'fa-ear-listen', points: 1 },
+                    { id: 'p6', label: '表現傑出', icon: 'fa-trophy', points: 3 },
+                ],
+                negative: [
+                    { id: 'n1', label: '上課講話', icon: 'fa-comment-slash', points: -1 },
+                    { id: 'n2', label: '未交作業', icon: 'fa-book-skull', points: -2 },
+                    { id: 'n3', label: '遲到', icon: 'fa-clock', points: -1 },
+                    { id: 'n4', label: '分心/發呆', icon: 'fa-eye-slash', points: -1 },
+                    { id: 'n5', label: '干擾秩序', icon: 'fa-ban', points: -2 },
+                    { id: 'n6', label: '不尊重', icon: 'fa-thumbs-down', points: -3 },
+                ]
+            }
+        };
+
+        let confirmActionCallback = null; // Store function to execute on confirm
+        let modalCloseTimeout = null; // Prevent modal closing bug
+
+        /**
+         * Initialize App
+         */
+        function initApp() {
+            loadData();
+            
+            // If no classes exist, create a default one
+            if (state.classes.length === 0) {
+                const defaultClassId = generateId();
+                state.classes.push({
+                    id: defaultClassId,
+                    name: '範例班級 (Demo Class)',
+                    students: [
+                        { id: generateId(), name: '王小明', avatar: 'fa-face-smile', score: 5 },
+                        { id: generateId(), name: '陳大牛', avatar: 'fa-cat', score: 2 },
+                        { id: generateId(), name: '林美美', avatar: 'fa-star', score: 8 }
+                    ]
+                });
+                state.currentClassId = defaultClassId;
+                saveData();
+            }
+
+            // Ensure a current class is selected
+            if (!state.currentClassId && state.classes.length > 0) {
+                state.currentClassId = state.classes[0].id;
+            }
+
+            setupEventListeners();
+            populateAvatarSelection();
+            renderLoginClassSelect();
+            renderPointShortcuts();
+
+            // Default state on load is unauthenticated (overlay visible)
+            // We wait for user to login as student or teacher
+            document.body.classList.add('overflow-hidden');
+        }
+
+        /**
+         * Generate unique ID
+         */
+        function generateId() {
+            return Date.now().toString(36) + Math.random().toString(36).substring(2);
+        }
+
+        /**
+         * String to Color Hash
+         */
+        function getColorForString(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = str.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const index = Math.abs(hash) % colors.length;
+            return colors[index];
+        }
+
+        /**
+         * Load data from localStorage
+         */
+        function loadData() {
+            try {
+                const storedData = localStorage.getItem(CONFIG.STORAGE_KEY);
+                if (storedData) {
+                    const parsed = JSON.parse(storedData);
+                    state.classes = parsed.classes || [];
+                    state.currentClassId = parsed.currentClassId || null;
+                    if (parsed.adminPin) state.adminPin = parsed.adminPin;
+                    if (parsed.shortcuts) state.shortcuts = parsed.shortcuts;
+                }
+            } catch (e) {
+                console.error("Failed to load data:", e);
+                showToast("資料載入失敗，可能已損毀", "error");
+            }
+        }
+
+        /**
+         * Save data to localStorage
+         */
+        function saveData() {
+            try {
+                const dataToSave = {
+                    classes: state.classes,
+                    currentClassId: state.currentClassId,
+                    adminPin: state.adminPin,
+                    shortcuts: state.shortcuts
+                };
+                localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(dataToSave));
+            } catch (e) {
+                console.error("Failed to save data:", e);
+                showToast("儲存失敗，可能儲存空間已滿", "error");
+            }
+        }
+
+        /**
+         * Get current class object
+         */
+        function getCurrentClass() {
+            return state.classes.find(c => c.id === state.currentClassId) || null;
+        }
+
+        /**
+         * Update UI Elements based on Authentication Role
+         */
+        function updateUIBasedOnRole() {
+            const teacherElements = document.querySelectorAll('.teacher-only');
+            const studentElements = document.querySelectorAll('.student-only');
+            const roleIndicator = document.getElementById('roleIndicator');
+            const authToggleBtn = document.getElementById('authToggleBtn');
+            const logoutBtn = document.getElementById('logoutBtn');
+            const mainContent = document.getElementById('mainContent');
+            const overlay = document.getElementById('studentLoginOverlay');
+
+            // Hide overlay and show main content
+            overlay.style.opacity = '0';
+            setTimeout(() => {
+                overlay.style.display = 'none';
+                mainContent.style.display = 'flex';
+                document.body.classList.remove('overflow-hidden');
+            }, 500);
+
+            if (state.isTeacher) {
+                teacherElements.forEach(el => el.classList.remove('hidden'));
+                studentElements.forEach(el => el.classList.add('hidden'));
+                
+                roleIndicator.innerHTML = '<i class="fa-solid fa-chalkboard-user"></i> 教師視角';
+                roleIndicator.className = 'bg-red-500/20 text-red-100 px-3 py-1 rounded-full text-sm font-medium flex items-center gap-2 border border-red-500/30';
+                
+                authToggleBtn.classList.add('hidden');
+                logoutBtn.classList.remove('hidden');
+
+                // Make sure class select has options
+                renderClassSelect();
+            } else if (state.loggedInStudentId) {
+                teacherElements.forEach(el => el.classList.add('hidden'));
+                studentElements.forEach(el => el.classList.remove('hidden'));
+                
+                roleIndicator.innerHTML = '<i class="fa-solid fa-user-graduate"></i> 學生視角';
+                roleIndicator.className = 'bg-white/20 px-3 py-1 rounded-full text-sm font-medium flex items-center gap-2';
+                
+                authToggleBtn.classList.remove('hidden');
+                logoutBtn.classList.remove('hidden');
+
+                updateClassHeader();
+            }
+            
+            renderStudents();
+        }
+
+        /**
+         * Render Class Selection Dropdown (For Login Overlay)
+         */
+        function renderLoginClassSelect() {
+            const select = document.getElementById('loginClassSelect');
+            select.innerHTML = '<option value="" disabled selected>請選擇您的班級...</option>';
+            
+            state.classes.forEach(c => {
+                const option = document.createElement('option');
+                option.value = c.id;
+                option.textContent = c.name;
+                select.appendChild(option);
+            });
+        }
+
+        /**
+         * Render Class Selection Dropdown (For Teacher Dashboard)
+         */
+        function renderClassSelect() {
+            const select = document.getElementById('classSelect');
+            select.innerHTML = '';
+            
+            if (state.classes.length === 0) {
+                select.innerHTML = '<option value="">無班級</option>';
+                select.disabled = true;
+                document.getElementById('currentClassNameDisplay').textContent = "無選擇班級";
+                return;
+            }
+
+            select.disabled = false;
+            state.classes.forEach(c => {
+                const option = document.createElement('option');
+                option.value = c.id;
+                option.textContent = c.name;
+                if (c.id === state.currentClassId) {
+                    option.selected = true;
+                }
+                select.appendChild(option);
+            });
+
+            updateClassHeader();
+        }
+
+        function updateClassHeader() {
+            const currentClass = getCurrentClass();
+            if (currentClass) {
+                document.getElementById('currentClassNameDisplay').textContent = currentClass.name;
+                document.getElementById('studentClassDisplay').textContent = currentClass.name;
+            } else {
+                document.getElementById('currentClassNameDisplay').textContent = "無選擇班級";
+                document.getElementById('studentClassDisplay').textContent = "無選擇班級";
+            }
+        }
+
+        /**
+         * Sort Students Array
+         */
+        function getSortedStudents(students) {
+            const arr = [...students];
+            switch (state.sortBy) {
+                case 'score_desc':
+                    return arr.sort((a, b) => b.score - a.score);
+                case 'score_asc':
+                    return arr.sort((a, b) => a.score - b.score);
+                case 'name':
+                    return arr.localeCompare ? arr.sort((a, b) => a.name.localeCompare(b.name, 'zh-TW')) : arr;
+                case 'id':
+                default:
+                    return arr; // Keep original insertion order
+            }
+        }
+
+        /**
+         * Render Students Grid
+         */
+        function renderStudents() {
+            const grid = document.getElementById('studentsGrid');
+            const emptyState = document.getElementById('emptyState');
+            const countDisplay = document.getElementById('studentCountDisplay');
+            const currentClass = getCurrentClass();
+
+            grid.innerHTML = '';
+
+            if (!currentClass || !currentClass.students || currentClass.students.length === 0) {
+                grid.classList.add('hidden');
+                emptyState.classList.remove('hidden');
+                countDisplay.textContent = '0';
+                return;
+            }
+
+            grid.classList.remove('hidden');
+            emptyState.classList.add('hidden');
+            countDisplay.textContent = currentClass.students.length;
+
+            const sortedStudents = getSortedStudents(currentClass.students);
+
+            sortedStudents.forEach(student => {
+                const bgColorClass = getColorForString(student.id);
+                const scoreColor = student.score < 0 ? 'text-danger' : (student.score > 0 ? 'text-secondary' : 'text-slate-500');
+                
+                // Highlight logged in student
+                const isMe = (!state.isTeacher && state.loggedInStudentId === student.id);
+                const borderClass = isMe ? 'border-primary shadow-md border-2' : 'border-slate-200';
+
+                // Card HTML structure
+                const card = document.createElement('div');
+                card.className = `student-card bg-white rounded-xl ${borderClass} overflow-hidden relative flex flex-col items-center p-4 ${state.isTeacher ? 'cursor-pointer hover:border-primary border' : ''}`;
+                card.dataset.id = student.id;
+
+                // Edit/Delete buttons (Teacher only)
+                let actionButtons = '';
+                if (state.isTeacher) {
+                    actionButtons = `
+                        <div class="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button class="w-6 h-6 rounded-md bg-slate-100 text-slate-500 hover:text-primary hover:bg-indigo-50 flex items-center justify-center text-xs btn-edit" data-id="${student.id}" title="編輯"><i class="fa-solid fa-pen"></i></button>
+                            <button class="w-6 h-6 rounded-md bg-slate-100 text-slate-500 hover:text-danger hover:bg-red-50 flex items-center justify-center text-xs btn-delete" data-id="${student.id}" title="刪除"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    `;
+                }
+                
+                let meBadge = isMe ? `<div class="absolute top-2 left-2 bg-primary text-white text-[10px] px-2 py-0.5 rounded-full font-bold">我</div>` : '';
+
+                card.innerHTML = `
+                    ${actionButtons}
+                    ${meBadge}
+                    <div class="group w-full flex flex-col items-center mt-2">
+                        <div class="w-16 h-16 ${bgColorClass} rounded-full flex items-center justify-center text-white text-2xl shadow-inner mb-3 relative">
+                            <i class="fa-solid ${student.avatar}"></i>
+                            ${state.isTeacher ? `<div class="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                <i class="fa-solid fa-plus text-white"></i>
+                            </div>` : ''}
+                        </div>
+                        <h3 class="font-bold text-slate-800 text-center truncate w-full px-2">${student.name}</h3>
+                        <div class="mt-2 bg-slate-100 rounded-full px-4 py-1 flex items-center gap-1">
+                            <span class="text-xs text-slate-500 font-medium">分數</span>
+                            <span class="font-black text-lg ${scoreColor} score-display" data-id="${student.id}">${student.score}</span>
+                        </div>
+                    </div>
+                `;
+
+                // Add event listeners
+                if (state.isTeacher) {
+                    // Click card to open point modal
+                    card.addEventListener('click', (e) => {
+                        // Prevent opening modal if clicking edit/delete buttons
+                        if(e.target.closest('.btn-edit') || e.target.closest('.btn-delete')) return;
+                        openPointModal(student);
+                    });
+
+                    // Edit button
+                    const editBtn = card.querySelector('.btn-edit');
+                    if(editBtn) {
+                        editBtn.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            openStudentModal(student);
+                        });
+                    }
+
+                    // Delete button
+                    const deleteBtn = card.querySelector('.btn-delete');
+                    if(deleteBtn) {
+                        deleteBtn.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            confirmAction('刪除學生', `確定要刪除「${student.name}」嗎？分數將會遺失。`, () => {
+                                deleteStudent(student.id);
+                            });
+                        });
+                    }
+                }
+
+                grid.appendChild(card);
+            });
+        }
+
+        function setupEventListeners() {
+            
+            // --- Student Login ---
+            document.getElementById('studentLoginBtn').addEventListener('click', handleStudentLogin);
+            document.getElementById('loginStudentName').addEventListener('keypress', (e) => {
+                if(e.key === 'Enter') handleStudentLogin();
+            });
+
+            document.getElementById('openTeacherLoginFromOverlay').addEventListener('click', () => {
+                openModal('loginModal');
+                setTimeout(() => document.getElementById('pinInput').focus(), 100);
+            });
+
+            // --- Logout ---
+            document.getElementById('logoutBtn').addEventListener('click', () => {
+                state.isTeacher = false;
+                state.loggedInStudentId = null;
+                
+                // Show overlay
+                const overlay = document.getElementById('studentLoginOverlay');
+                const mainContent = document.getElementById('mainContent');
+                
+                overlay.style.display = 'flex';
+                // Trigger reflow
+                void overlay.offsetWidth;
+                overlay.style.opacity = '1';
+                mainContent.style.display = 'none';
+                document.body.classList.add('overflow-hidden');
+                
+                // Reset login inputs
+                document.getElementById('loginStudentName').value = '';
+                document.getElementById('studentLoginError').classList.add('hidden');
+                
+                showToast("已登出");
+            });
+
+
+            // Role Toggle / Login from Navbar
+            document.getElementById('authToggleBtn').addEventListener('click', () => {
+                openModal('loginModal');
+                setTimeout(() => document.getElementById('pinInput').focus(), 100);
+            });
+
+            // Settings Button
+            document.getElementById('settingsBtn').addEventListener('click', () => {
+                openSettingsModal();
+            });
+
+            // Login Submit (Teacher)
+            document.getElementById('loginSubmitBtn').addEventListener('click', handleTeacherLogin);
+            document.getElementById('pinInput').addEventListener('keypress', (e) => {
+                if(e.key === 'Enter') handleTeacherLogin();
+            });
+
+            // Class Selection Change
+            document.getElementById('classSelect').addEventListener('change', (e) => {
+                state.currentClassId = e.target.value;
+                saveData();
+                updateClassHeader();
+                renderStudents();
+            });
+
+            // --- FIXED: Edit Class Action ---
+            document.getElementById('editClassBtn').addEventListener('click', () => {
+                const currentClass = getCurrentClass();
+                if(currentClass) {
+                    // Update Modal Title and pre-fill data
+                    document.getElementById('classModalTitle').textContent = '編輯班級名稱';
+                    document.getElementById('classNameInput').value = currentClass.name;
+                    document.getElementById('editClassId').value = currentClass.id; // Store ID to distinguish from "Add"
+                    
+                    openModal('classModal');
+                    setTimeout(() => document.getElementById('classNameInput').focus(), 100);
+                }
+            });
+
+            // --- FIXED: Add Class Action ---
+            document.getElementById('addClassBtn').addEventListener('click', () => {
+                document.getElementById('classModalTitle').textContent = '建立新班級';
+                document.getElementById('classNameInput').value = '';
+                document.getElementById('editClassId').value = ''; // Clear ID to ensure it's "Add"
+                
+                openModal('classModal');
+                setTimeout(() => document.getElementById('classNameInput').focus(), 100);
+            });
+
+            document.getElementById('saveClassBtn').addEventListener('click', saveClass);
+            document.getElementById('classNameInput').addEventListener('keypress', (e) => {
+                if(e.key === 'Enter') saveClass();
+            });
+
+
+            // Delete Class Action
+            document.getElementById('deleteClassBtn').addEventListener('click', () => {
+                const currentClass = getCurrentClass();
+                if(currentClass) {
+                    confirmAction('刪除班級', `確定要刪除「${currentClass.name}」嗎？所有學生與分數資料將會被清除，且無法復原！`, () => {
+                        state.classes = state.classes.filter(c => c.id !== currentClass.id);
+                        state.currentClassId = state.classes.length > 0 ? state.classes[0].id : null;
+                        saveData();
+                        renderClassSelect();
+                        renderLoginClassSelect();
+                        renderStudents();
+                        showToast("班級已刪除", "success");
+                    });
+                }
+            });
+
+            // Sorting Change
+            document.getElementById('sortSelect').addEventListener('change', (e) => {
+                state.sortBy = e.target.value;
+                renderStudents();
+            });
+
+            // Add Student
+            document.getElementById('addStudentBtn').addEventListener('click', () => {
+                openStudentModal();
+            });
+            document.getElementById('saveStudentBtn').addEventListener('click', saveStudent);
+            document.getElementById('studentNameInput').addEventListener('keypress', (e) => {
+                if(e.key === 'Enter') saveStudent();
+            });
+
+            // Reset Points
+            document.getElementById('resetPointsBtn').addEventListener('click', () => {
+                confirmAction('重置全班分數', '確定要將目前班級所有學生的分數歸零嗎？', () => {
+                    const currentClass = getCurrentClass();
+                    if(currentClass) {
+                        currentClass.students.forEach(s => s.score = 0);
+                        saveData();
+                        renderStudents();
+                        showToast("全班分數已重置", "success");
+                    }
+                });
+            });
+
+            // Custom Point Button in Modal
+            document.getElementById('btnCustomPoint').addEventListener('click', () => {
+                const targetId = document.getElementById('targetStudentId').value;
+                const points = parseInt(document.getElementById('customPointValue').value) || 0;
+                const reason = document.getElementById('customPointReason').value || '自訂調整';
+                if(points !== 0) {
+                    addPoints(targetId, points, reason);
+                    closeAllModals();
+                }
+            });
+
+            // Export Data
+            document.getElementById('exportDataBtn').addEventListener('click', exportData);
+
+            // Save PIN
+            document.getElementById('savePinBtn').addEventListener('click', () => {
+                const newPin = document.getElementById('newPinInput').value.trim();
+                if(newPin.length > 0) {
+                    state.adminPin = newPin;
+                    saveData();
+                    document.getElementById('newPinInput').value = '';
+                    showToast("管理員密碼已更新", "success");
+                } else {
+                    showToast("密碼不能為空", "error");
+                }
+            });
+
+            // Save Settings
+            document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+
+            // Modal Close Buttons
+            document.querySelectorAll('.close-modal').forEach(btn => {
+                btn.addEventListener('click', closeAllModals);
+            });
+
+            // Close modal on overlay click
+            document.getElementById('modalOverlay').addEventListener('click', (e) => {
+                if (e.target.id === 'modalOverlay') closeAllModals();
+            });
+
+            // Confirm Action Modal Button
+            document.getElementById('confirmActionBtn').addEventListener('click', () => {
+                if(confirmActionCallback) {
+                    confirmActionCallback();
+                    confirmActionCallback = null;
+                }
+                closeAllModals();
+            });
+        }
+
+        function handleStudentLogin() {
+            const classId = document.getElementById('loginClassSelect').value;
+            const name = document.getElementById('loginStudentName').value.trim();
+            const errorEl = document.getElementById('studentLoginError');
+
+            if (!classId || !name) {
+                errorEl.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> 請選擇班級並輸入姓名';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+
+            const targetClass = state.classes.find(c => c.id === classId);
+            if (targetClass) {
+                const student = targetClass.students.find(s => s.name === name);
+                if (student) {
+                    // Login Success
+                    state.isTeacher = false;
+                    state.loggedInStudentId = student.id;
+                    state.currentClassId = classId;
+                    
+                    errorEl.classList.add('hidden');
+                    updateUIBasedOnRole();
+                    showToast(`歡迎回來，${student.name}!`, 'success');
+                } else {
+                    errorEl.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> 找不到該學生，請確認姓名是否正確';
+                    errorEl.classList.remove('hidden');
+                }
+            } else {
+                errorEl.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i> 班級不存在';
+                errorEl.classList.remove('hidden');
+            }
+        }
+
+        function handleTeacherLogin() {
+            let pin = document.getElementById('pinInput').value.trim();
+
+            if (pin === state.adminPin) {
+                state.isTeacher = true;
+                state.loggedInStudentId = null; // Clear student login if any
+                document.getElementById('pinInput').value = '';
+                document.getElementById('loginError').classList.add('hidden');
+                closeAllModals();
+                updateUIBasedOnRole();
+                showToast("登入成功，已解鎖教師權限", "success");
+            } else {
+                document.getElementById('loginError').classList.remove('hidden');
+                // shake effect
+                const modal = document.getElementById('loginModal');
+                modal.classList.add('animate-pulse');
+                setTimeout(() => modal.classList.remove('animate-pulse'), 500);
+            }
+        }
+
+        // Settings Modal Functions
+        function openSettingsModal() {
+            renderSettingsShortcuts();
+            openModal('settingsModal');
+        }
+
+        function createShortcutSettingRow(item, type) {
+            const div = document.createElement('div');
+            div.className = "flex gap-2 items-center shortcut-row bg-white p-2 rounded border border-slate-200 shadow-sm";
+            div.dataset.type = type;
+            div.innerHTML = `
+                <div class="flex-grow flex gap-2">
+                    <input type="text" class="shortcut-label w-full px-2 py-1.5 border border-slate-300 rounded text-sm focus:border-primary outline-none" value="${item.label}" placeholder="項目名稱">
+                    <input type="number" class="shortcut-points w-20 px-2 py-1.5 border border-slate-300 rounded text-sm text-center focus:border-primary outline-none" value="${Math.abs(item.points)}" min="1">
+                </div>
+                <button class="text-slate-400 hover:text-danger p-2 bg-slate-50 hover:bg-red-50 rounded transition-colors" onclick="this.parentElement.remove()" title="刪除"><i class="fa-solid fa-trash"></i></button>
+            `;
+            return div;
+        }
+
+        function addShortcutRow(type) {
+            const container = document.getElementById(type === 'positive' ? 'settingsPosList' : 'settingsNegList');
+            container.appendChild(createShortcutSettingRow({label: '', points: 1}, type));
+        }
+
+        function renderSettingsShortcuts() {
+            const posList = document.getElementById('settingsPosList');
+            const negList = document.getElementById('settingsNegList');
+            posList.innerHTML = '';
+            negList.innerHTML = '';
+
+            state.shortcuts.positive.forEach(item => {
+                posList.appendChild(createShortcutSettingRow(item, 'positive'));
+            });
+            state.shortcuts.negative.forEach(item => {
+                negList.appendChild(createShortcutSettingRow(item, 'negative'));
+            });
+        }
+
+        function saveSettings() {
+            const newPos = [];
+            document.querySelectorAll('#settingsPosList .shortcut-row').forEach(row => {
+                const label = row.querySelector('.shortcut-label').value.trim();
+                const points = parseInt(row.querySelector('.shortcut-points').value) || 1;
+                if(label) newPos.push({ id: 'p_'+Date.now()+Math.random(), label, icon: 'fa-star', points: Math.abs(points) });
+            });
+
+            const newNeg = [];
+            document.querySelectorAll('#settingsNegList .shortcut-row').forEach(row => {
+                const label = row.querySelector('.shortcut-label').value.trim();
+                const points = parseInt(row.querySelector('.shortcut-points').value) || 1;
+                if(label) newNeg.push({ id: 'n_'+Date.now()+Math.random(), label, icon: 'fa-circle-exclamation', points: -Math.abs(points) });
+            });
+
+            state.shortcuts.positive = newPos;
+            state.shortcuts.negative = newNeg;
+            
+            saveData();
+            renderPointShortcuts();
+            showToast("系統設定已儲存", "success");
+            closeAllModals();
+        }
+
+        function openModal(modalId) {
+            // Cancel any pending close operations to prevent race conditions
+            if (modalCloseTimeout) {
+                clearTimeout(modalCloseTimeout);
+                modalCloseTimeout = null;
+            }
+            
+            // Instantly hide all modals first
+            document.querySelectorAll('.modal-content').forEach(m => {
+                m.classList.add('hidden');
+                m.classList.remove('scale-100');
+                m.classList.add('scale-95');
+            });
+
+            const overlay = document.getElementById('modalOverlay');
+            const modal = document.getElementById(modalId);
+            
+            overlay.classList.remove('hidden');
+            // Small delay to allow display:block to apply before animating opacity
+            setTimeout(() => {
+                overlay.classList.remove('opacity-0');
+                modal.classList.remove('hidden');
+                setTimeout(() => {
+                    modal.classList.remove('scale-95');
+                    modal.classList.add('scale-100');
+                }, 10);
+            }, 10);
+        }
+
+        function closeAllModals() {
+            const overlay = document.getElementById('modalOverlay');
+            const modals = document.querySelectorAll('.modal-content');
+            
+            overlay.classList.add('opacity-0');
+            modals.forEach(m => {
+                m.classList.remove('scale-100');
+                m.classList.add('scale-95');
+            });
+
+            if (modalCloseTimeout) clearTimeout(modalCloseTimeout);
+            
+            modalCloseTimeout = setTimeout(() => {
+                overlay.classList.add('hidden');
+                modals.forEach(m => m.classList.add('hidden'));
+                
+                // Reset specific states
+                document.getElementById('loginError').classList.add('hidden');
+                document.getElementById('pinInput').value = '';
+            }, 300); // match transition duration
+        }
+
+        function confirmAction(title, message, callback) {
+            document.getElementById('confirmTitle').textContent = title;
+            document.getElementById('confirmMessage').textContent = message;
+            confirmActionCallback = callback;
+            openModal('confirmModal');
+        }
+
+        // --- FIXED: saveClass logic for Add / Edit Class ---
+        function saveClass() {
+            const name = document.getElementById('classNameInput').value.trim();
+            const editIdInput = document.getElementById('editClassId');
+            const editId = editIdInput ? editIdInput.value : '';
+            
+            if (!name) {
+                showToast("請輸入班級名稱", "error");
+                return;
+            }
+
+            if (editId) {
+                // Edit existing class name
+                const targetClass = state.classes.find(c => c.id === editId);
+                if (targetClass) {
+                    targetClass.name = name; // Only update the name, preserving students/data
+                    showToast(`班級名稱已更新: ${name}`, "success");
+                }
+            } else {
+                // Add new class
+                const newClass = {
+                    id: generateId(),
+                    name: name,
+                    students: []
+                };
+                state.classes.push(newClass);
+                state.currentClassId = newClass.id; // switch to new class
+                showToast(`已建立班級: ${name}`, "success");
+            }
+
+            // 1. Save state to localStorage
+            saveData();
+            
+            // 2. Immediately update the UI components
+            renderClassSelect(); // Updates teacher dropdown
+            renderLoginClassSelect(); // Updates student login dropdown
+            updateClassHeader(); // Updates the text headers instantly
+            renderStudents(); // Re-render student grid
+            
+            closeAllModals();
+        }
+
+        function populateAvatarSelection() {
+            const container = document.getElementById('avatarSelection');
+            container.innerHTML = '';
+            const input = document.getElementById('selectedAvatar');
+
+            avatarIcons.forEach((icon, index) => {
+                const btn = document.createElement('button');
+                btn.className = `w-10 h-10 rounded-lg border-2 flex items-center justify-center text-lg transition-colors ${index === 0 ? 'border-primary bg-indigo-50 text-primary' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`;
+                btn.innerHTML = `<i class="fa-solid ${icon}"></i>`;
+                
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault(); // prevent form submit if any
+                    // Reset all
+                    container.querySelectorAll('button').forEach(b => {
+                        b.className = 'w-10 h-10 rounded-lg border-2 border-slate-200 flex items-center justify-center text-lg text-slate-500 hover:border-slate-300 transition-colors';
+                    });
+                    // Set active
+                    btn.className = 'w-10 h-10 rounded-lg border-2 border-primary bg-indigo-50 flex items-center justify-center text-lg text-primary transition-colors';
+                    input.value = icon;
+                });
+                
+                container.appendChild(btn);
+            });
+        }
+
+        function openStudentModal(student = null) {
+            const title = document.getElementById('studentModalTitle');
+            const nameInput = document.getElementById('studentNameInput');
+            const idInput = document.getElementById('editStudentId');
+            const avatarInput = document.getElementById('selectedAvatar');
+            const container = document.getElementById('avatarSelection');
+
+            if (student) {
+                title.textContent = '編輯學生';
+                nameInput.value = student.name;
+                idInput.value = student.id;
+                avatarInput.value = student.avatar || 'fa-user';
+            } else {
+                title.textContent = '新增學生';
+                nameInput.value = '';
+                idInput.value = '';
+                avatarInput.value = 'fa-user'; // Default
+            }
+
+            // Update UI selection for avatar
+            container.querySelectorAll('button').forEach(b => {
+                const i = b.querySelector('i');
+                if (i.classList.contains(avatarInput.value)) {
+                    b.className = 'w-10 h-10 rounded-lg border-2 border-primary bg-indigo-50 flex items-center justify-center text-lg text-primary transition-colors';
+                } else {
+                    b.className = 'w-10 h-10 rounded-lg border-2 border-slate-200 flex items-center justify-center text-lg text-slate-500 hover:border-slate-300 transition-colors';
+                }
+            });
+
+            openModal('studentModal');
+            setTimeout(() => nameInput.focus(), 100);
+        }
+
+        function saveStudent() {
+            const currentClass = getCurrentClass();
+            if (!currentClass) {
+                showToast("請先建立並選擇一個班級", "error");
+                return;
+            }
+
+            const name = document.getElementById('studentNameInput').value.trim();
+            const editId = document.getElementById('editStudentId').value;
+            const avatar = document.getElementById('selectedAvatar').value;
+
+            if (!name) {
+                showToast("請輸入學生姓名", "error");
+                return;
+            }
+
+            if (editId) {
+                // Edit existing
+                const student = currentClass.students.find(s => s.id === editId);
+                if (student) {
+                    student.name = name;
+                    student.avatar = avatar;
+                    showToast("已更新學生資料", "success");
+                }
+            } else {
+                // Add new
+                const newStudent = {
+                    id: generateId(),
+                    name: name,
+                    avatar: avatar,
+                    score: 0
+                };
+                currentClass.students.push(newStudent);
+                showToast(`已新增學生: ${name}`, "success");
+            }
+
+            saveData();
+            renderStudents();
+            closeAllModals();
+        }
+
+        function deleteStudent(studentId) {
+            const currentClass = getCurrentClass();
+            if(currentClass) {
+                currentClass.students = currentClass.students.filter(s => s.id !== studentId);
+                saveData();
+                renderStudents();
+                showToast("已刪除學生");
+            }
+        }
+
+        function renderPointShortcuts() {
+            const posContainer = document.getElementById('positiveShortcuts');
+            const negContainer = document.getElementById('negativeShortcuts');
+
+            posContainer.innerHTML = '';
+            negContainer.innerHTML = '';
+
+            const createButton = (item, type) => {
+                const btn = document.createElement('button');
+                const isPos = type === 'positive';
+                const baseColor = isPos ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100';
+                
+                btn.className = `border rounded-lg p-2 flex flex-col items-center justify-center gap-1 transition-colors ${baseColor}`;
+                btn.innerHTML = `
+                    <div class="w-8 h-8 rounded-full ${isPos ? 'bg-emerald-100' : 'bg-red-100'} flex items-center justify-center mb-1">
+                        <i class="fa-solid ${item.icon}"></i>
+                    </div>
+                    <span class="text-xs font-semibold">${item.label}</span>
+                    <span class="text-sm font-bold ${isPos ? 'text-emerald-600' : 'text-red-600'}">${item.points > 0 ? '+'+item.points : item.points}</span>
+                `;
+                
+                btn.addEventListener('click', () => {
+                    const targetId = document.getElementById('targetStudentId').value;
+                    addPoints(targetId, item.points, item.label);
+                    closeAllModals();
+                });
+                return btn;
+            };
+
+            state.shortcuts.positive.forEach(item => posContainer.appendChild(createButton(item, 'positive')));
+            state.shortcuts.negative.forEach(item => negContainer.appendChild(createButton(item, 'negative')));
+        }
+
+        function openPointModal(student) {
+            document.getElementById('targetStudentId').value = student.id;
+            document.getElementById('pointTargetName').querySelector('span').textContent = student.name;
+            
+            // Reset custom input
+            document.getElementById('customPointValue').value = 1;
+            document.getElementById('customPointReason').value = '';
+            
+            openModal('pointModal');
+        }
+
+        function addPoints(studentId, points, reason) {
+            const currentClass = getCurrentClass();
+            if(!currentClass) return;
+
+            const student = currentClass.students.find(s => s.id === studentId);
+            if(!student) return;
+
+            student.score += points;
+            saveData();
+            
+            // Trigger Visual Update without full re-render for better UX
+            updateStudentScoreDisplay(studentId, student.score, points);
+            
+            const actionText = points > 0 ? `加 ${points} 分` : `扣 ${Math.abs(points)} 分`;
+            showToast(`${student.name} ${actionText} (${reason})`, points > 0 ? 'success' : 'error');
+        }
+
+        function updateStudentScoreDisplay(studentId, newScore, pointsChange) {
+            const card = document.querySelector(`.student-card[data-id="${studentId}"]`);
+            if(!card) return;
+
+            const scoreDisplay = card.querySelector('.score-display');
+            if(scoreDisplay) {
+                // Update value
+                scoreDisplay.textContent = newScore;
+                
+                // Update Color class
+                scoreDisplay.className = `font-black text-lg score-display ${newScore < 0 ? 'text-danger' : (newScore > 0 ? 'text-secondary' : 'text-slate-500')}`;
+                
+                // Add pop animation
+                scoreDisplay.classList.remove('point-animation');
+                void scoreDisplay.offsetWidth; // trigger reflow
+                scoreDisplay.classList.add('point-animation');
+            }
+
+            // Create floating point element
+            createFloatingPoint(card, pointsChange);
+            
+            // Re-render full list after animation if sorted by score to maintain order
+            if(state.sortBy.includes('score')) {
+                setTimeout(() => {
+                    renderStudents();
+                }, 1000);
+            }
+        }
+
+        function createFloatingPoint(cardEl, points) {
+            const floating = document.createElement('div');
+            floating.className = `floating-point ${points > 0 ? 'text-secondary' : 'text-danger'}`;
+            floating.textContent = points > 0 ? `+${points}` : points;
+            
+            // Position relative to card center
+            floating.style.left = '50%';
+            floating.style.top = '30%';
+            floating.style.transform = 'translate(-50%, -50%)';
+            
+            cardEl.appendChild(floating);
+            
+            // Remove after animation
+            setTimeout(() => {
+                if(floating.parentNode === cardEl) {
+                    cardEl.removeChild(floating);
+                }
+            }, 1000);
+        }
+
+        function exportData() {
+            const currentClass = getCurrentClass();
+            if(!currentClass || !currentClass.students || currentClass.students.length === 0) {
+                showToast("沒有班級資料可匯出", "error");
+                return;
+            }
+
+            // CSV format with UTF-8 BOM for Excel support
+            let csvContent = "\uFEFF"; 
+            csvContent += "學生姓名,分數\n";
+            
+            const sortedStudents = getSortedStudents(currentClass.students);
+            
+            sortedStudents.forEach(student => {
+                // Escape quotes in name
+                const safeName = student.name.replace(/"/g, '""');
+                csvContent += `"${safeName}",${student.score}\n`;
+            });
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            
+            const dateStr = new Date().toISOString().slice(0,10);
+            const fileName = `${currentClass.name}_加分紀錄_${dateStr}.csv`;
+            
+            link.setAttribute("href", url);
+            link.setAttribute("download", fileName);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            showToast("CSV 資料已匯出下載", "success");
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            let icon = 'fa-circle-info text-primary';
+            if (type === 'success') icon = 'fa-circle-check text-secondary';
+            if (type === 'error') icon = 'fa-circle-exclamation text-danger';
+
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `<i class="fa-solid ${icon} text-xl"></i> <span class="font-medium text-sm">${message}</span>`;
+            
+            container.appendChild(toast);
+            
+            // Trigger animation
+            setTimeout(() => toast.classList.add('show'), 10);
+            
+            // Remove after 3 seconds
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => container.removeChild(toast), 300);
+            }, 3000);
+        }
+
+        // Initialize application on load
+        window.addEventListener('DOMContentLoaded', initApp);
+
+    </script>
+</body>
+</html>
