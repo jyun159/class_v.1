@@ -5,22 +5,61 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智慧課堂加分系統 (Classroom Point System)</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet"
+          onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css'">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
-    <!-- Firebase SDK -->
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+    <!-- 外部程式庫載入器：依序嘗試多個 CDN，任一成功即可（避免單一網域被封鎖） -->
+    <script>
+        function loadScriptChain(urls) {
+            return new Promise((resolve, reject) => {
+                let i = 0;
+                (function next() {
+                    if (i >= urls.length) return reject(new Error('all sources failed'));
+                    const s = document.createElement('script');
+                    s.src = urls[i++];
+                    s.onload = () => resolve(s.src);
+                    s.onerror = () => { s.remove(); next(); };
+                    document.head.appendChild(s);
+                })();
+            });
+        }
+        window.libStatus = { firebase: false, xlsx: false, firebaseSource: '', errors: [] };
+        window.libsReady = (async () => {
+            const v = '10.12.2';
+            try {
+                await loadScriptChain([
+                    `https://www.gstatic.com/firebasejs/${v}/firebase-app-compat.js`,
+                    `https://cdn.jsdelivr.net/npm/firebase@${v}/firebase-app-compat.js`,
+                    `https://unpkg.com/firebase@${v}/firebase-app-compat.js`
+                ]);
+                const src = await loadScriptChain([
+                    `https://www.gstatic.com/firebasejs/${v}/firebase-firestore-compat.js`,
+                    `https://cdn.jsdelivr.net/npm/firebase@${v}/firebase-firestore-compat.js`,
+                    `https://unpkg.com/firebase@${v}/firebase-firestore-compat.js`
+                ]);
+                window.libStatus.firebase = (typeof firebase !== 'undefined');
+                window.libStatus.firebaseSource = src;
+            } catch (e) { window.libStatus.errors.push('Firebase SDK：gstatic / jsdelivr / unpkg 全部無法連線'); }
+            try {
+                await loadScriptChain([
+                    'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+                    'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+                    'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js'
+                ]);
+                window.libStatus.xlsx = (typeof XLSX !== 'undefined');
+            } catch (e) { window.libStatus.errors.push('Excel 元件（SheetJS）無法載入'); }
+        })();
+    </script>
     <script>
         tailwind.config = {
             theme: {
                 extend: {
-                    fontFamily: {
-                        sans: ['Inter', 'Noto Sans TC', 'sans-serif'],
-                    },
+                    fontFamily: { sans: ['Inter', 'Noto Sans TC', 'sans-serif'] },
                     colors: {
                         primary: '#4f46e5',
                         secondary: '#10b981',
                         danger: '#ef4444',
+                        warn: '#f59e0b',
                         dark: '#1e293b',
                         light: '#f8fafc',
                     }
@@ -47,23 +86,34 @@
         .floating-point { position: absolute; font-weight: bold; font-size: 1.5rem; pointer-events: none; animation: floatUp 1s ease-out forwards; z-index: 50; }
         @keyframes floatUp { 0% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(-50px); } }
 
-        #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; }
+        #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; max-width: 90vw; }
         .toast { min-width: 250px; background: white; padding: 12px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); transform: translateX(120%); transition: transform 0.3s ease-in-out; display: flex; align-items: center; gap: 10px; border-left: 4px solid #4f46e5; }
         .toast.show { transform: translateX(0); }
         .toast.success { border-left-color: #10b981; }
         .toast.error { border-left-color: #ef4444; }
-        .hide { display: none !important; }
 
-        #studentLoginOverlay { position: fixed; inset: 0; background: rgba(241,245,249,0.95); backdrop-filter: blur(8px); z-index: 1000; display: flex; justify-content: center; align-items: center; }
+        #studentLoginOverlay { position: fixed; inset: 0; background: rgba(241,245,249,0.97); backdrop-filter: blur(8px); z-index: 1000; display: flex; justify-content: center; align-items: center; overflow-y: auto; padding: 24px 12px; }
 
-        /* 同步狀態指示器 */
-        #syncIndicator { position: fixed; top: 68px; right: 12px; z-index: 999; font-size: 11px; padding: 3px 8px; border-radius: 999px; display: flex; align-items: center; gap: 4px; transition: all 0.3s; }
+        .rank-badge { position: absolute; top: -8px; left: -8px; width: 28px; height: 28px; border-radius: 9999px; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:13px; box-shadow: 0 2px 6px rgba(0,0,0,0.25); }
+        .stat-card { background: linear-gradient(135deg, #ffffff, #f8fafc); }
+
+        #syncBanner { display:none; }
+        #syncBanner.show { display:flex; }
     </style>
 </head>
-<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col relative overflow-hidden">
+<body class="bg-gradient-to-br from-slate-100 to-slate-200 text-slate-800 min-h-screen flex flex-col relative">
 
-    <!-- 同步狀態指示器 -->
-    <div id="syncIndicator" class="bg-green-100 text-green-700">
+    <!-- 同步問題橫幅：有錯誤時常駐顯示，不會自動消失 -->
+    <div id="syncBanner" class="fixed top-0 inset-x-0 z-[1100] bg-red-600 text-white text-sm px-4 py-2 items-center justify-between gap-3 flex-wrap">
+        <span id="syncBannerText" class="flex items-center gap-2"><i class="fa-solid fa-triangle-exclamation"></i> 同步發生問題</span>
+        <div class="flex items-center gap-2">
+            <button id="syncRetryBtn" class="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-xs font-semibold">重試連線</button>
+            <button id="syncBannerClose" class="text-white/80 hover:text-white px-2"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+    </div>
+
+    <!-- 同步狀態小標籤 -->
+    <div id="syncIndicator" class="fixed top-3 right-3 z-[999] text-[11px] px-2 py-1 rounded-full flex items-center gap-1 bg-slate-100 text-slate-500 shadow-sm">
         <i class="fa-solid fa-cloud text-xs"></i> <span id="syncText">連線中...</span>
     </div>
 
@@ -96,11 +146,14 @@
                     <i class="fa-solid fa-shield-halved"></i> 老師請點此登入
                 </button>
             </div>
+            <div id="overlaySyncHint" class="hidden mt-4 text-xs text-center text-amber-600 bg-amber-50 border border-amber-200 rounded p-2">
+                <i class="fa-solid fa-spinner fa-spin"></i> 正在連接雲端資料...
+            </div>
         </div>
     </div>
 
     <!-- Navigation Bar -->
-    <nav class="bg-primary text-white shadow-md z-40 sticky top-0">
+    <nav class="bg-gradient-to-r from-primary to-indigo-700 text-white shadow-md z-40 sticky top-0">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16 items-center">
                 <div class="flex items-center gap-3">
@@ -108,7 +161,7 @@
                     <span class="font-bold text-xl tracking-tight hidden sm:block">智慧課堂加分系統</span>
                     <span class="font-bold text-xl tracking-tight sm:hidden">加分系統</span>
                 </div>
-                <div class="flex items-center gap-4">
+                <div class="flex items-center gap-3">
                     <button id="settingsBtn" class="teacher-only hidden text-white hover:text-indigo-200 transition-colors" title="系統設定"><i class="fa-solid fa-gear text-xl"></i></button>
                     <div id="roleIndicator" class="bg-white/20 px-3 py-1 rounded-full text-sm font-medium flex items-center gap-2"><i class="fa-solid fa-user-graduate"></i> 學生視角</div>
                     <button id="authToggleBtn" class="bg-white text-primary hover:bg-slate-100 px-4 py-2 rounded-lg font-semibold transition-colors flex items-center gap-2 text-sm hidden"><i class="fa-solid fa-lock"></i> <span>教師登入</span></button>
@@ -122,7 +175,7 @@
     <main class="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full flex flex-col gap-6" id="mainContent" style="display: none;">
 
         <div class="glass-panel rounded-2xl p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
-            <div class="flex items-center gap-2 w-full sm:w-auto">
+            <div class="flex items-center gap-2 w-full sm:w-auto flex-wrap">
                 <label class="font-semibold text-slate-700 whitespace-nowrap"><i class="fa-solid fa-chalkboard-user mr-1"></i> 目前班級:</label>
                 <select id="classSelect" class="teacher-only hidden bg-slate-50 border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-primary focus:border-primary block w-40 p-2.5 outline-none font-medium transition-colors cursor-pointer"></select>
                 <button id="editClassBtn" class="teacher-only hidden bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg w-10 h-10 flex items-center justify-center transition-colors" title="編輯班級名稱"><i class="fa-solid fa-pen"></i></button>
@@ -133,12 +186,32 @@
             <div class="teacher-only hidden flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
                 <button id="addStudentBtn" class="bg-primary hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm flex items-center gap-2 shadow-sm"><i class="fa-solid fa-user-plus"></i> <span class="hidden sm:inline">新增學生</span></button>
                 <div class="h-6 w-px bg-slate-300 hidden sm:block mx-1"></div>
-                <button id="exportDataBtn" class="bg-secondary hover:bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm flex items-center gap-2 shadow-sm"><i class="fa-solid fa-file-csv"></i> <span class="hidden md:inline">匯出 CSV</span></button>
+                <button id="exportDataBtn" class="bg-secondary hover:bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm flex items-center gap-2 shadow-sm"><i class="fa-solid fa-file-excel"></i> <span class="hidden md:inline">匯出 Excel</span></button>
+            </div>
+        </div>
+
+        <!-- 統計卡片（教師視角） -->
+        <div class="teacher-only hidden grid grid-cols-2 md:grid-cols-4 gap-4" id="statsRow">
+            <div class="stat-card rounded-xl p-4 border border-slate-200 shadow-sm flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-indigo-100 text-primary flex items-center justify-center"><i class="fa-solid fa-users"></i></div>
+                <div><p class="text-xs text-slate-500">學生人數</p><p id="statCount" class="text-xl font-bold text-slate-800">0</p></div>
+            </div>
+            <div class="stat-card rounded-xl p-4 border border-slate-200 shadow-sm flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-emerald-100 text-secondary flex items-center justify-center"><i class="fa-solid fa-chart-line"></i></div>
+                <div><p class="text-xs text-slate-500">平均分數</p><p id="statAvg" class="text-xl font-bold text-slate-800">0</p></div>
+            </div>
+            <div class="stat-card rounded-xl p-4 border border-slate-200 shadow-sm flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-amber-100 text-warn flex items-center justify-center"><i class="fa-solid fa-trophy"></i></div>
+                <div><p class="text-xs text-slate-500">最高分</p><p id="statMax" class="text-xl font-bold text-slate-800">0</p></div>
+            </div>
+            <div class="stat-card rounded-xl p-4 border border-slate-200 shadow-sm flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-red-100 text-danger flex items-center justify-center"><i class="fa-solid fa-chart-column"></i></div>
+                <div><p class="text-xs text-slate-500">最低分</p><p id="statMin" class="text-xl font-bold text-slate-800">0</p></div>
             </div>
         </div>
 
         <div class="glass-panel rounded-2xl p-6 flex-grow min-h-[500px]">
-            <div class="flex justify-between items-end mb-6">
+            <div class="flex justify-between items-end mb-6 flex-wrap gap-3">
                 <div>
                     <h2 id="currentClassNameDisplay" class="text-2xl font-bold text-slate-800">載入中...</h2>
                     <p class="text-slate-500 text-sm mt-1">
@@ -188,6 +261,7 @@
                     <button class="close-modal w-full py-2 px-4 border border-slate-300 text-slate-700 rounded-lg hover:bg-slate-50 transition-colors">取消</button>
                     <button id="loginSubmitBtn" class="w-full py-2 px-4 bg-primary text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium">登入</button>
                 </div>
+                <p class="text-xs text-slate-400 text-center mt-3">預設密碼：1234（登入後請至設定變更）</p>
             </div>
         </div>
 
@@ -205,7 +279,7 @@
                         <button id="savePinBtn" class="bg-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors">更新密碼</button>
                     </div>
                 </div>
-                <div>
+                <div class="mb-8">
                     <h4 class="font-bold text-slate-700 mb-3 border-b pb-2">自訂快捷鍵 (加減分)</h4>
                     <div class="mb-6">
                         <h5 class="font-semibold text-secondary mb-2"><i class="fa-solid fa-circle-plus"></i> 加分項目</h5>
@@ -217,6 +291,11 @@
                         <div id="settingsNegList" class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3"></div>
                         <button class="text-sm text-danger hover:bg-red-50 px-3 py-1 rounded border border-red-200 transition-colors" onclick="addShortcutRow('negative')"><i class="fa-solid fa-plus"></i> 新增扣分項</button>
                     </div>
+                </div>
+                <div>
+                    <h4 class="font-bold text-slate-700 mb-3 border-b pb-2">雲端連線診斷</h4>
+                    <div id="diagnosticsBox" class="text-xs font-mono bg-slate-900 text-emerald-300 p-3 rounded-lg max-h-40 overflow-y-auto space-y-1"></div>
+                    <button id="runDiagnosticsBtn" class="mt-2 text-sm text-primary hover:underline"><i class="fa-solid fa-stethoscope"></i> 重新檢查連線</button>
                 </div>
             </div>
             <div class="p-5 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
@@ -277,19 +356,23 @@
                 </div>
                 <button class="close-modal text-slate-400 hover:text-slate-600 transition-colors"><i class="fa-solid fa-xmark text-xl"></i></button>
             </div>
-            <div class="p-5">
+            <div class="p-5 max-h-[75vh] overflow-y-auto">
                 <input type="hidden" id="targetStudentId">
                 <h4 class="font-medium text-secondary mb-3 flex items-center gap-2"><i class="fa-solid fa-circle-plus"></i> 加分項目</h4>
                 <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6" id="positiveShortcuts"></div>
                 <h4 class="font-medium text-danger mb-3 flex items-center gap-2"><i class="fa-solid fa-circle-minus"></i> 扣分項目</h4>
                 <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6" id="negativeShortcuts"></div>
-                <div class="border-t border-slate-100 pt-4 mt-2">
+                <div class="border-t border-slate-100 pt-4 mt-2 mb-4">
                     <h4 class="font-medium text-slate-700 mb-3 text-sm">自訂分數</h4>
                     <div class="flex items-center gap-2">
                         <input type="number" id="customPointValue" value="1" class="w-20 px-3 py-2 border border-slate-300 rounded-lg text-center font-bold focus:outline-none focus:border-primary">
                         <input type="text" id="customPointReason" placeholder="輸入原因 (選填)" class="flex-grow px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:border-primary">
                         <button class="bg-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition-colors" id="btnCustomPoint">確定</button>
                     </div>
+                </div>
+                <div class="border-t border-slate-100 pt-4">
+                    <h4 class="font-medium text-slate-700 mb-2 text-sm"><i class="fa-solid fa-clock-rotate-left"></i> 最近紀錄</h4>
+                    <div id="pointHistoryList" class="text-xs text-slate-500 space-y-1 max-h-32 overflow-y-auto"></div>
                 </div>
             </div>
         </div>
@@ -313,7 +396,7 @@
 
     <script>
     // =====================================================
-    // Firebase 設定（你的專案）
+    // Firebase 設定
     // =====================================================
     const FIREBASE_CONFIG = {
         apiKey: "AIzaSyA-UEARZaN8_yDKy57mD2xi0Tuq4xHNbkM",
@@ -324,12 +407,15 @@
         messagingSenderId: "503446081970",
         appId: "1:503446081970:web:fc4be397fefedae3b8d4ab"
     };
+    const FIRESTORE_COLLECTION = 'classroom';
+    const FIRESTORE_DOC = 'main';
+    const HISTORY_LIMIT_PER_STUDENT = 500; // 避免單一文件無限成長
 
     // =====================================================
-    // 設定常數
+    // 常數
     // =====================================================
     const CONFIG = { STORAGE_KEY: "classroom_point_system_data" };
-    const LOCAL_CLASS_KEY  = "classroom_current_class_id"; // 只存在本機，不同步
+    const LOCAL_CLASS_KEY  = "classroom_current_class_id";
 
     const avatarIcons = ['fa-user','fa-face-smile','fa-cat','fa-dog','fa-dragon','fa-frog','fa-robot','fa-ghost','fa-kiwi-bird','fa-snowman','fa-meteor','fa-star'];
     const colors = ['bg-red-500','bg-orange-500','bg-amber-500','bg-green-500','bg-emerald-500','bg-teal-500','bg-cyan-500','bg-blue-500','bg-indigo-500','bg-violet-500','bg-purple-500','bg-fuchsia-500','bg-pink-500'];
@@ -371,31 +457,67 @@
     // Firebase / 資料同步
     // =====================================================
     let docRef = null;
-    let isSyncing = false; // 自己寫入時暫時忽略 snapshot
+    let suppressNextSnapshot = false;
+    let lastSyncErrorCode = null;
 
-    function setSyncStatus(status) {
-        // status: 'ok' | 'saving' | 'error' | 'offline'
-        const el = document.getElementById('syncIndicator');
+    function logDiag(msg) {
+        const box = document.getElementById('diagnosticsBox');
+        if (!box) return;
+        const time = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+        const line = document.createElement('div');
+        line.textContent = `[${time}] ${msg}`;
+        box.appendChild(line);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    function setSyncStatus(status, detail) {
+        const el  = document.getElementById('syncIndicator');
         const txt = document.getElementById('syncText');
         const map = {
             ok:      ['bg-green-100 text-green-700',  'fa-cloud',          '已同步'],
             saving:  ['bg-blue-100 text-blue-700',    'fa-cloud-arrow-up', '儲存中...'],
             error:   ['bg-red-100 text-red-700',      'fa-cloud-bolt',     '同步失敗'],
             offline: ['bg-slate-100 text-slate-500',  'fa-cloud-slash',    '離線模式'],
+            connecting: ['bg-amber-100 text-amber-700', 'fa-cloud',        '連線中...'],
         };
         const [cls, icon, label] = map[status] || map.ok;
-        el.className = `fixed top-[68px] right-3 z-[999] text-[11px] px-2 py-1 rounded-full flex items-center gap-1 transition-all ${cls}`;
+        el.className = `fixed top-3 right-3 z-[999] text-[11px] px-2 py-1 rounded-full flex items-center gap-1 shadow-sm transition-all ${cls}`;
         el.querySelector('i').className = `fa-solid ${icon} text-xs`;
         txt.textContent = label;
+
+        const banner = document.getElementById('syncBanner');
+        const bannerText = document.getElementById('syncBannerText');
+        if (status === 'error' || status === 'offline') {
+            bannerText.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> ${detail || '雲端同步發生問題，資料可能只存在這台裝置'}`;
+            banner.classList.add('show');
+        } else {
+            banner.classList.remove('show');
+        }
+        if (detail) logDiag(detail);
     }
 
-    /** 把 Firestore 資料套用到 state */
+    function friendlyFirestoreError(err) {
+        lastSyncErrorCode = err && err.code;
+        if (!err) return '未知錯誤';
+        switch (err.code) {
+            case 'permission-denied':
+                return '權限被拒絕（permission-denied）：請到 Firebase 主控台 → Firestore Database → 規則，確認已發布允許讀寫的規則。';
+            case 'unavailable':
+                return '目前無法連線到伺服器（unavailable）：請檢查網路連線，或稍後再試。';
+            case 'not-found':
+                return '找不到 Firestore 資料庫（not-found）：請確認已在 Firebase 主控台建立 Firestore Database。';
+            case 'failed-precondition':
+                return 'Firestore 尚未啟用或設定不完整（failed-precondition）。';
+            default:
+                return `發生錯誤（${err.code || err.message}）`;
+        }
+    }
+
     function applyRemoteData(data) {
         state.classes   = data.classes   || [];
         state.adminPin  = data.adminPin  || state.adminPin;
         if (data.shortcuts) state.shortcuts = data.shortcuts;
 
-        // 目前班級：本機記憶的 id 若還存在就沿用，否則取第一個
         const saved = localStorage.getItem(LOCAL_CLASS_KEY);
         if (!state.classes.find(c => c.id === state.currentClassId)) {
             state.currentClassId =
@@ -405,36 +527,49 @@
         }
     }
 
-    /** 把資料推到 Firestore，同時快取到 localStorage */
+    function trimHistory() {
+        state.classes.forEach(c => {
+            (c.students || []).forEach(s => {
+                if (s.history && s.history.length > HISTORY_LIMIT_PER_STUDENT) {
+                    s.history = s.history.slice(s.history.length - HISTORY_LIMIT_PER_STUDENT);
+                }
+            });
+        });
+    }
+
     function saveData() {
+        trimHistory();
         const data = {
             classes:   state.classes,
             adminPin:  state.adminPin,
             shortcuts: state.shortcuts
         };
 
-        // 本機快取（離線可用）
         try {
             localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(data));
             if (state.currentClassId) localStorage.setItem(LOCAL_CLASS_KEY, state.currentClassId);
-        } catch(e) { console.error(e); }
+        } catch(e) { console.error(e); logDiag('本機快取寫入失敗：' + e.message); }
 
-        // 推到 Firestore
         if (docRef) {
-            isSyncing = true;
             setSyncStatus('saving');
+            suppressNextSnapshot = true;
             docRef.set(data)
-                .then(() => { setSyncStatus('ok'); })
+                .then(() => {
+                    setSyncStatus('ok');
+                    logDiag('寫入雲端成功');
+                })
                 .catch(err => {
                     console.error('Firestore write error:', err);
-                    setSyncStatus('error');
-                    showToast('雲端儲存失敗，請確認網路或 Firestore 規則', 'error');
-                })
-                .finally(() => { setTimeout(() => { isSyncing = false; }, 500); });
+                    const msg = friendlyFirestoreError(err);
+                    setSyncStatus('error', msg);
+                    showToast('雲端儲存失敗：' + msg, 'error');
+                    suppressNextSnapshot = false;
+                });
+        } else {
+            setSyncStatus('offline', '尚未連接雲端資料庫，目前僅儲存在本機');
         }
     }
 
-    /** 讀取本機快取（離線 fallback） */
     function loadLocalCache() {
         try {
             state.currentClassId = localStorage.getItem(LOCAL_CLASS_KEY) || null;
@@ -443,55 +578,89 @@
         } catch(e) { console.error(e); }
     }
 
-    /** 啟動 Firestore 即時監聽 */
     function startFirebaseSync() {
+        setSyncStatus('connecting', '正在初始化 Firebase...');
+        if (typeof firebase === 'undefined') {
+            setSyncStatus('error', '無法載入 Firebase 程式庫：目前網路可能封鎖了 gstatic / jsdelivr / unpkg，請換網路（如手機熱點）或關閉廣告攔截後重新整理。');
+            document.getElementById('overlaySyncHint').classList.add('hidden');
+            return;
+        }
         try {
-            firebase.initializeApp(FIREBASE_CONFIG);
-            docRef = firebase.firestore().collection('classroom').doc('main');
+            if (!firebase.apps || !firebase.apps.length) {
+                firebase.initializeApp(FIREBASE_CONFIG);
+            }
+            docRef = firebase.firestore().collection(FIRESTORE_COLLECTION).doc(FIRESTORE_DOC);
+            logDiag('Firebase 初始化成功，開始監聽文件: ' + FIRESTORE_COLLECTION + '/' + FIRESTORE_DOC);
 
             docRef.onSnapshot({ includeMetadataChanges: true }, snap => {
-                // 自己正在寫入時忽略
-                if (isSyncing && snap.metadata.hasPendingWrites) return;
-                if (snap.metadata.hasPendingWrites) return;
+                if (snap.metadata.hasPendingWrites) {
+                    // 這是自己剛寫入、還在等待伺服器確認的版本，跳過避免覆蓋自己畫面
+                    return;
+                }
+                if (suppressNextSnapshot) {
+                    suppressNextSnapshot = false;
+                }
 
                 if (snap.exists) {
                     applyRemoteData(snap.data());
-                    // 更新本機快取
                     try { localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(snap.data())); } catch(e) {}
                     setSyncStatus('ok');
+                    logDiag('收到雲端資料更新 (來源: ' + (snap.metadata.fromCache ? '本機快取' : '伺服器') + ')');
+                    refreshUI();
                 } else {
-                    // 雲端沒有資料 → 上傳初始資料
+                    logDiag('雲端文件不存在，將建立初始資料');
                     if (state.classes.length === 0) {
                         const id = generateId();
                         state.classes.push({
                             id, name: '範例班級 (Demo Class)',
                             students: [
-                                { id: generateId(), name: '王小明', avatar: 'fa-face-smile', score: 5 },
-                                { id: generateId(), name: '陳大牛', avatar: 'fa-cat',         score: 2 },
-                                { id: generateId(), name: '林美美', avatar: 'fa-star',        score: 8 }
+                                { id: generateId(), name: '王小明', avatar: 'fa-face-smile', score: 5, history: [] },
+                                { id: generateId(), name: '陳大牛', avatar: 'fa-cat',         score: 2, history: [] },
+                                { id: generateId(), name: '林美美', avatar: 'fa-star',        score: 8, history: [] }
                             ]
                         });
                         state.currentClassId = id;
                     }
                     saveData();
-                    return; // saveData 會觸發新的 snapshot，不必繼續
                 }
-
-                // 重新渲染 UI
-                refreshUI();
             }, err => {
                 console.error('Firestore listener error:', err);
-                setSyncStatus('offline');
-                showToast('無法連線雲端，目前使用本機離線資料', 'error');
+                const msg = friendlyFirestoreError(err);
+                setSyncStatus('error', msg);
+                showToast('無法連線雲端：' + msg, 'error');
             });
 
         } catch(e) {
             console.error('Firebase init error:', e);
-            setSyncStatus('offline');
+            setSyncStatus('error', '初始化 Firebase 失敗：' + e.message);
         }
     }
 
-    /** Firestore 有更新時刷新所有 UI */
+    function runDiagnostics() {
+        const box = document.getElementById('diagnosticsBox');
+        if (box) box.innerHTML = '';
+        logDiag('開始檢查連線...');
+        if (typeof firebase === 'undefined') {
+            logDiag('❌ Firebase SDK 未載入成功，請檢查網路或廣告攔截套件');
+            return;
+        }
+        logDiag('✅ Firebase SDK 已載入');
+        if (!docRef) {
+            logDiag('⚠️ 尚未建立 Firestore 連線，嘗試重新連線...');
+            startFirebaseSync();
+            return;
+        }
+        docRef.get({ source: 'server' }).then(snap => {
+            logDiag('✅ 成功連線到 Firestore 伺服器');
+            logDiag(snap.exists ? '✅ 雲端文件存在，資料筆數: ' + ((snap.data().classes||[]).length) + ' 個班級' : '⚠️ 雲端文件不存在（將自動建立）');
+            setSyncStatus('ok');
+        }).catch(err => {
+            const msg = friendlyFirestoreError(err);
+            logDiag('❌ 連線測試失敗：' + msg);
+            setSyncStatus('error', msg);
+        });
+    }
+
     function refreshUI() {
         const loginSel = document.getElementById('loginClassSelect');
         const prevLogin = loginSel.value;
@@ -502,12 +671,10 @@
 
         const main = document.getElementById('mainContent');
         if (main.style.display !== 'none') {
-            if (state.isTeacher) {
-                renderClassSelect();
-            } else {
-                updateClassHeader();
-            }
+            if (state.isTeacher) renderClassSelect();
+            else updateClassHeader();
             renderStudents();
+            renderStats();
         }
     }
 
@@ -521,7 +688,7 @@
         renderLoginClassSelect();
         renderPointShortcuts();
         document.body.classList.add('overflow-hidden');
-        setSyncStatus('saving');
+        document.getElementById('overlaySyncHint').classList.remove('hidden');
         startFirebaseSync();
     }
 
@@ -538,6 +705,14 @@
     }
     function getCurrentClass() {
         return state.classes.find(c => c.id === state.currentClassId) || null;
+    }
+    function formatDateTime(ts) {
+        const d = new Date(ts);
+        const pad = n => String(n).padStart(2, '0');
+        return {
+            date: `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())}`,
+            time: `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+        };
     }
 
     // =====================================================
@@ -576,6 +751,7 @@
         }
 
         renderStudents();
+        renderStats();
     }
 
     function renderLoginClassSelect() {
@@ -616,6 +792,23 @@
         document.getElementById('studentClassDisplay').textContent = name;
     }
 
+    function renderStats() {
+        const cur = getCurrentClass();
+        const students = cur ? (cur.students || []) : [];
+        document.getElementById('statCount').textContent = students.length;
+        if (students.length === 0) {
+            document.getElementById('statAvg').textContent = '0';
+            document.getElementById('statMax').textContent = '0';
+            document.getElementById('statMin').textContent = '0';
+            return;
+        }
+        const scores = students.map(s => s.score);
+        const avg = (scores.reduce((a,b) => a+b, 0) / scores.length);
+        document.getElementById('statAvg').textContent = avg.toFixed(1);
+        document.getElementById('statMax').textContent = Math.max(...scores);
+        document.getElementById('statMin').textContent = Math.min(...scores);
+    }
+
     // =====================================================
     // 學生卡片渲染
     // =====================================================
@@ -647,7 +840,11 @@
         emptyState.style.display = 'none';
         countDisplay.textContent = cur.students.length;
 
-        getSortedStudents(cur.students).forEach(student => {
+        const sorted = getSortedStudents(cur.students);
+        const rankColors = ['bg-amber-400 text-white', 'bg-slate-300 text-slate-700', 'bg-amber-700 text-white'];
+        const showRank = state.sortBy === 'score_desc';
+
+        sorted.forEach((student, idx) => {
             const bgColor = getColorForString(student.id);
             const scoreColor = student.score < 0 ? 'text-danger' : (student.score > 0 ? 'text-secondary' : 'text-slate-500');
             const isMe = (!state.isTeacher && state.loggedInStudentId === student.id);
@@ -666,9 +863,10 @@
                     </div>`;
             }
             const meBadge = isMe ? `<div class="absolute top-2 left-2 bg-primary text-white text-[10px] px-2 py-0.5 rounded-full font-bold">我</div>` : '';
+            const rankBadge = (showRank && idx < 3) ? `<div class="rank-badge ${rankColors[idx]}">${idx+1}</div>` : '';
 
             card.innerHTML = `
-                ${actionButtons}${meBadge}
+                ${actionButtons}${meBadge}${rankBadge}
                 <div class="group w-full flex flex-col items-center mt-2">
                     <div class="w-16 h-16 ${bgColor} rounded-full flex items-center justify-center text-white text-2xl shadow-inner mb-3 relative">
                         <i class="fa-solid ${student.avatar}"></i>
@@ -729,6 +927,7 @@
             localStorage.setItem(LOCAL_CLASS_KEY, state.currentClassId);
             updateClassHeader();
             renderStudents();
+            renderStats();
         });
 
         document.getElementById('editClassBtn').addEventListener('click', () => {
@@ -763,6 +962,7 @@
                     renderClassSelect();
                     renderLoginClassSelect();
                     renderStudents();
+                    renderStats();
                     showToast('班級已刪除', 'success');
                 });
             }
@@ -774,9 +974,22 @@
         document.getElementById('studentNameInput').addEventListener('keypress', e => { if (e.key === 'Enter') saveStudent(); });
 
         document.getElementById('resetPointsBtn').addEventListener('click', () => {
-            confirmAction('重置全班分數', '確定要將所有學生分數歸零嗎？', () => {
+            confirmAction('重置全班分數', '確定要將所有學生分數歸零嗎？（會記錄一筆歸零歷史）', () => {
                 const cur = getCurrentClass();
-                if (cur) { cur.students.forEach(s => s.score = 0); saveData(); renderStudents(); showToast('全班分數已重置', 'success'); }
+                if (cur) {
+                    const now = Date.now();
+                    cur.students.forEach(s => {
+                        if (s.score !== 0) {
+                            if (!s.history) s.history = [];
+                            s.history.push({ ts: now, points: -s.score, reason: '重置歸零', scoreAfter: 0 });
+                        }
+                        s.score = 0;
+                    });
+                    saveData();
+                    renderStudents();
+                    renderStats();
+                    showToast('全班分數已重置', 'success');
+                }
             });
         });
 
@@ -796,6 +1009,10 @@
         });
 
         document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+        document.getElementById('runDiagnosticsBtn').addEventListener('click', runDiagnostics);
+        document.getElementById('syncRetryBtn').addEventListener('click', () => { startFirebaseSync(); });
+        document.getElementById('syncBannerClose').addEventListener('click', () => { document.getElementById('syncBanner').classList.remove('show'); });
+
         document.querySelectorAll('.close-modal').forEach(btn => btn.addEventListener('click', closeAllModals));
         document.getElementById('modalOverlay').addEventListener('click', e => { if (e.target.id === 'modalOverlay') closeAllModals(); });
         document.getElementById('confirmActionBtn').addEventListener('click', () => {
@@ -849,7 +1066,13 @@
     // =====================================================
     // 設定 Modal
     // =====================================================
-    function openSettingsModal() { renderSettingsShortcuts(); openModal('settingsModal'); }
+    function openSettingsModal() {
+        renderSettingsShortcuts();
+        const box = document.getElementById('diagnosticsBox');
+        if (box) box.innerHTML = '';
+        openModal('settingsModal');
+        runDiagnostics();
+    }
 
     function createShortcutSettingRow(item, type) {
         const div = document.createElement('div');
@@ -954,6 +1177,7 @@
         renderLoginClassSelect();
         updateClassHeader();
         renderStudents();
+        renderStats();
         closeAllModals();
     }
 
@@ -1009,21 +1233,22 @@
             const s = cur.students.find(s => s.id === editId);
             if (s) { s.name = name; s.avatar = avatar; showToast('已更新學生資料', 'success'); }
         } else {
-            cur.students.push({ id: generateId(), name, avatar, score: 0 });
+            cur.students.push({ id: generateId(), name, avatar, score: 0, history: [] });
             showToast(`已新增學生: ${name}`, 'success');
         }
         saveData();
         renderStudents();
+        renderStats();
         closeAllModals();
     }
 
     function deleteStudent(studentId) {
         const cur = getCurrentClass();
-        if (cur) { cur.students = cur.students.filter(s => s.id !== studentId); saveData(); renderStudents(); showToast('已刪除學生'); }
+        if (cur) { cur.students = cur.students.filter(s => s.id !== studentId); saveData(); renderStudents(); renderStats(); showToast('已刪除學生'); }
     }
 
     // =====================================================
-    // 加減分
+    // 加減分 + 歷史紀錄
     // =====================================================
     function renderPointShortcuts() {
         const pos = document.getElementById('positiveShortcuts');
@@ -1050,11 +1275,28 @@
         state.shortcuts.negative.forEach(item => neg.appendChild(makeBtn(item, 'negative')));
     }
 
+    function renderPointHistoryList(student) {
+        const container = document.getElementById('pointHistoryList');
+        container.innerHTML = '';
+        const hist = (student.history || []).slice(-8).reverse();
+        if (hist.length === 0) { container.innerHTML = '<p class="text-slate-400">尚無紀錄</p>'; return; }
+        hist.forEach(h => {
+            const { date, time } = formatDateTime(h.ts);
+            const sign = h.points > 0 ? `+${h.points}` : h.points;
+            const color = h.points > 0 ? 'text-secondary' : 'text-danger';
+            const row = document.createElement('div');
+            row.className = 'flex justify-between items-center border-b border-slate-100 py-1';
+            row.innerHTML = `<span>${date} ${time}・${h.reason}</span><span class="font-bold ${color}">${sign}</span>`;
+            container.appendChild(row);
+        });
+    }
+
     function openPointModal(student) {
         document.getElementById('targetStudentId').value = student.id;
         document.getElementById('pointTargetName').querySelector('span').textContent = student.name;
         document.getElementById('customPointValue').value = 1;
         document.getElementById('customPointReason').value = '';
+        renderPointHistoryList(student);
         openModal('pointModal');
     }
 
@@ -1064,8 +1306,11 @@
         const student = cur.students.find(s => s.id === studentId);
         if (!student) return;
         student.score += points;
+        if (!student.history) student.history = [];
+        student.history.push({ ts: Date.now(), points, reason, scoreAfter: student.score });
         saveData();
         updateStudentScoreDisplay(studentId, student.score, points);
+        renderStats();
         const txt = points > 0 ? `加 ${points} 分` : `扣 ${Math.abs(points)} 分`;
         showToast(`${student.name} ${txt} (${reason})`, points > 0 ? 'success' : 'error');
     }
@@ -1095,18 +1340,51 @@
     }
 
     // =====================================================
-    // 匯出 CSV
+    // 匯出 Excel (.xlsx)：總表 + 完整加扣分歷史紀錄
     // =====================================================
     function exportData() {
         const cur = getCurrentClass();
         if (!cur || !cur.students?.length) { showToast('沒有資料可匯出', 'error'); return; }
-        let csv = '\uFEFF學生姓名,分數\n';
-        getSortedStudents(cur.students).forEach(s => { csv += `"${s.name.replace(/"/g, '""')}",${s.score}\n`; });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
-        a.download = `${cur.name}_加分紀錄_${new Date().toISOString().slice(0, 10)}.csv`;
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        showToast('CSV 已匯出', 'success');
+
+        if (typeof XLSX === 'undefined') {
+            showToast('Excel 元件載入失敗（網路可能封鎖了 jsdelivr / cdnjs / unpkg），請換網路後重新整理', 'error');
+            return;
+        }
+
+        // 工作表 1：總表
+        const summaryData = [['姓名', '目前總分', '加減分次數']];
+        getSortedStudents(cur.students).forEach(s => {
+            summaryData.push([s.name, s.score, (s.history || []).length]);
+        });
+
+        // 工作表 2：完整加扣分歷史紀錄（依時間排序）
+        const allEntries = [];
+        cur.students.forEach(s => {
+            (s.history || []).forEach(h => {
+                allEntries.push({ name: s.name, ...h });
+            });
+        });
+        allEntries.sort((a, b) => a.ts - b.ts);
+
+        const historyData = [['姓名', '日期', '時間', '項目', '分數變化', '異動後總分']];
+        allEntries.forEach(h => {
+            const { date, time } = formatDateTime(h.ts);
+            historyData.push([h.name, date, time, h.reason, h.points, h.scoreAfter]);
+        });
+        if (allEntries.length === 0) historyData.push(['（尚無加減分紀錄）', '', '', '', '', '']);
+
+        const wb = XLSX.utils.book_new();
+        const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+        wsSummary['!cols'] = [{ wch: 16 }, { wch: 10 }, { wch: 12 }];
+        const wsHistory = XLSX.utils.aoa_to_sheet(historyData);
+        wsHistory['!cols'] = [{ wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 18 }, { wch: 10 }, { wch: 10 }];
+
+        XLSX.utils.book_append_sheet(wb, wsSummary, '總表');
+        XLSX.utils.book_append_sheet(wb, wsHistory, '加扣分紀錄');
+
+        const dateStr = new Date().toISOString().slice(0, 10);
+        XLSX.writeFile(wb, `${cur.name}_加分紀錄_${dateStr}.xlsx`);
+        showToast('Excel 已匯出', 'success');
     }
 
     // =====================================================
@@ -1126,7 +1404,12 @@
     // =====================================================
     // 啟動
     // =====================================================
-    window.addEventListener('DOMContentLoaded', initApp);
+    window.addEventListener('DOMContentLoaded', async () => {
+        try { await window.libsReady; } catch (e) {}
+        initApp();
+        if (window.libStatus.firebase) logDiag('Firebase SDK 來源：' + window.libStatus.firebaseSource);
+        window.libStatus.errors.forEach(msg => logDiag('❌ ' + msg));
+    });
     </script>
 </body>
 </html>
