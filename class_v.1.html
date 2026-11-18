@@ -40,14 +40,6 @@
                 window.libStatus.firebase = (typeof firebase !== 'undefined');
                 window.libStatus.firebaseSource = src;
             } catch (e) { window.libStatus.errors.push('Firebase SDK：gstatic / jsdelivr / unpkg 全部無法連線'); }
-            try {
-                await loadScriptChain([
-                    'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
-                    'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
-                    'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js'
-                ]);
-                window.libStatus.xlsx = (typeof XLSX !== 'undefined');
-            } catch (e) { window.libStatus.errors.push('Excel 元件（SheetJS）無法載入'); }
         })();
     </script>
     <script>
@@ -104,7 +96,7 @@
 <body class="bg-gradient-to-br from-slate-100 to-slate-200 text-slate-800 min-h-screen flex flex-col relative">
 
     <!-- 同步問題橫幅：有錯誤時常駐顯示，不會自動消失 -->
-    <div id="syncBanner" class="fixed top-0 inset-x-0 z-[1100] bg-red-600 text-white text-sm px-4 py-2 items-center justify-between gap-3 flex-wrap">
+    <div id="syncBanner" class="relative w-full z-[1100] bg-red-600 text-white text-sm px-4 py-2 items-center justify-between gap-3 flex-wrap">
         <span id="syncBannerText" class="flex items-center gap-2"><i class="fa-solid fa-triangle-exclamation"></i> 同步發生問題</span>
         <div class="flex items-center gap-2">
             <button id="syncRetryBtn" class="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-xs font-semibold">重試連線</button>
@@ -113,7 +105,7 @@
     </div>
 
     <!-- 同步狀態小標籤 -->
-    <div id="syncIndicator" class="fixed top-3 right-3 z-[999] text-[11px] px-2 py-1 rounded-full flex items-center gap-1 bg-slate-100 text-slate-500 shadow-sm">
+    <div id="syncIndicator" class="fixed bottom-3 left-3 z-[999] text-[11px] px-2 py-1 rounded-full flex items-center gap-1 bg-slate-100 text-slate-500 shadow-sm">
         <i class="fa-solid fa-cloud text-xs"></i> <span id="syncText">連線中...</span>
     </div>
 
@@ -186,7 +178,7 @@
             <div class="teacher-only hidden flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
                 <button id="addStudentBtn" class="bg-primary hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm flex items-center gap-2 shadow-sm"><i class="fa-solid fa-user-plus"></i> <span class="hidden sm:inline">新增學生</span></button>
                 <div class="h-6 w-px bg-slate-300 hidden sm:block mx-1"></div>
-                <button id="exportDataBtn" class="bg-secondary hover:bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm flex items-center gap-2 shadow-sm"><i class="fa-solid fa-file-excel"></i> <span class="hidden md:inline">匯出 Excel</span></button>
+                <button id="exportDataBtn" class="bg-secondary hover:bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm flex items-center gap-2 shadow-sm"><i class="fa-solid fa-file-csv"></i> <span class="hidden md:inline">匯出 CSV</span></button>
             </div>
         </div>
 
@@ -481,7 +473,12 @@
             connecting: ['bg-amber-100 text-amber-700', 'fa-cloud',        '連線中...'],
         };
         const [cls, icon, label] = map[status] || map.ok;
-        el.className = `fixed top-3 right-3 z-[999] text-[11px] px-2 py-1 rounded-full flex items-center gap-1 shadow-sm transition-all ${cls}`;
+        el.className = `fixed bottom-3 left-3 z-[999] text-[11px] px-2 py-1 rounded-full flex items-center gap-1 shadow-sm transition-all ${cls}`;
+
+        // 只要不是「連線中」，就隱藏登入畫面上的「正在連接雲端資料...」提示
+        if (status !== 'connecting') {
+            document.getElementById('overlaySyncHint')?.classList.add('hidden');
+        }
         el.querySelector('i').className = `fa-solid ${icon} text-xs`;
         txt.textContent = label;
 
@@ -1346,45 +1343,43 @@
         const cur = getCurrentClass();
         if (!cur || !cur.students?.length) { showToast('沒有資料可匯出', 'error'); return; }
 
-        if (typeof XLSX === 'undefined') {
-            showToast('Excel 元件載入失敗（網路可能封鎖了 jsdelivr / cdnjs / unpkg），請換網路後重新整理', 'error');
-            return;
-        }
+        const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+        const row = arr => arr.map(esc).join(',');
 
-        // 工作表 1：總表
-        const summaryData = [['姓名', '目前總分', '加減分次數']];
-        getSortedStudents(cur.students).forEach(s => {
-            summaryData.push([s.name, s.score, (s.history || []).length]);
-        });
-
-        // 工作表 2：完整加扣分歷史紀錄（依時間排序）
+        // 區塊 1：完整加扣分紀錄（依時間排序）
         const allEntries = [];
         cur.students.forEach(s => {
-            (s.history || []).forEach(h => {
-                allEntries.push({ name: s.name, ...h });
-            });
+            (s.history || []).forEach(h => allEntries.push({ name: s.name, ...h }));
         });
         allEntries.sort((a, b) => a.ts - b.ts);
 
-        const historyData = [['姓名', '日期', '時間', '項目', '分數變化', '異動後總分']];
-        allEntries.forEach(h => {
-            const { date, time } = formatDateTime(h.ts);
-            historyData.push([h.name, date, time, h.reason, h.points, h.scoreAfter]);
+        const lines = [];
+        lines.push(row(['【加扣分紀錄】']));
+        lines.push(row(['姓名', '日期', '時間', '項目', '分數變化', '異動後總分']));
+        if (allEntries.length === 0) {
+            lines.push(row(['（尚無加減分紀錄）']));
+        } else {
+            allEntries.forEach(h => {
+                const { date, time } = formatDateTime(h.ts);
+                lines.push(row([h.name, date, time, h.reason, h.points, h.scoreAfter]));
+            });
+        }
+
+        // 區塊 2：目前總分
+        lines.push('');
+        lines.push(row(['【目前總分】']));
+        lines.push(row(['姓名', '目前總分', '加減分次數']));
+        getSortedStudents(cur.students).forEach(s => {
+            lines.push(row([s.name, s.score, (s.history || []).length]));
         });
-        if (allEntries.length === 0) historyData.push(['（尚無加減分紀錄）', '', '', '', '', '']);
 
-        const wb = XLSX.utils.book_new();
-        const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-        wsSummary['!cols'] = [{ wch: 16 }, { wch: 10 }, { wch: 12 }];
-        const wsHistory = XLSX.utils.aoa_to_sheet(historyData);
-        wsHistory['!cols'] = [{ wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 18 }, { wch: 10 }, { wch: 10 }];
-
-        XLSX.utils.book_append_sheet(wb, wsSummary, '總表');
-        XLSX.utils.book_append_sheet(wb, wsHistory, '加扣分紀錄');
-
-        const dateStr = new Date().toISOString().slice(0, 10);
-        XLSX.writeFile(wb, `${cur.name}_加分紀錄_${dateStr}.xlsx`);
-        showToast('Excel 已匯出', 'success');
+        // UTF-8 BOM：讓 Excel 正確顯示中文
+        const csv = '\uFEFF' + lines.join('\r\n');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+        a.download = `${cur.name}_加分紀錄_${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        showToast('CSV 已匯出', 'success');
     }
 
     // =====================================================
